@@ -538,3 +538,46 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+
+// walk 하면서 Present+User 페이지만 출력
+void
+printpt(int pid)
+{
+  struct proc *p;
+  acquire(&ptable.lock);               // ① 동시성 보호
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->pid != pid)
+      continue;
+
+    cprintf("START PAGE TABLE (pid %d)\n", pid);
+
+    // 유저 공간 0 ~ KERNBASE-1
+    for (uint va = 0; va < KERNBASE; va += PGSIZE) {
+      pde_t pde = p->pgdir[PDX(va)];
+      if (!(pde & PTE_P))
+        continue;
+
+      pte_t *ptab = (pte_t*)P2V(PTE_ADDR(pde));
+      pte_t  pte  = ptab[PTX(va)];
+      if (!(pte & PTE_P))
+        continue;
+
+      // ② VPN = va >> PGSHIFT
+      uint vpn = va >> PGSHIFT;
+      uint ppn = PTE_ADDR(pte) >> PGSHIFT;
+      char acc_u = (pte & PTE_U) ? 'U' : 'K';
+      char acc_w = (pte & PTE_W) ? 'W' : '-';
+
+      cprintf("%5x  P %c %c  %5x\n", vpn, acc_u, acc_w, ppn);
+    }
+
+    cprintf("END PAGE TABLE\n");
+    release(&ptable.lock);
+    return;
+  }
+
+  cprintf("printpt: pid %d not found\n", pid);
+  release(&ptable.lock);
+}

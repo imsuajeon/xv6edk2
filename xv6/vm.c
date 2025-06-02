@@ -9,6 +9,7 @@
 #include "graphic.h"
 
 extern char data[];  // defined by kernel.ld
+extern char end[];
 pde_t *kpgdir;  // for use in scheduler()
 
 extern struct gpu gpu;
@@ -35,7 +36,7 @@ seginit(void)
 // Return the address of the PTE in page table pgdir
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page table pages.
-static pte_t *
+pte_t *
 walkpgdir(pde_t *pgdir, const void *va, int alloc)
 {
   pde_t *pde;
@@ -60,7 +61,7 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned.
-static int
+int
 mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
 {
   char *a, *last;
@@ -272,18 +273,19 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
   a = PGROUNDUP(newsz);
   for(; a  < oldsz; a += PGSIZE){
     pte = walkpgdir(pgdir, (char*)a, 0);
-    if(!pte)
+    if(!pte){
       a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
-    else if((*pte & PTE_P) != 0){
+    }
+    else if((*pte & PTE_P)!=0){
       pa = PTE_ADDR(*pte);
       if(pa == 0)
         panic("kfree");
       char *v = P2V(pa);
-      kfree(v);
-      *pte = 0;
+      kfree(v);  // free the physical page
+      *pte = 0;  // clear the PTE
     }
   }
-  return newsz;
+  return newsz;  // return the new size
 }
 
 // Free a page table and all the physical memory pages
@@ -324,18 +326,29 @@ pde_t*
 copyuvm(pde_t *pgdir, uint sz)
 {
   pde_t *d;
-  pte_t *pte;
+  pte_t *pte, *dst_pte;
   uint pa, i, flags;
   char *mem;
 
   if((d = setupkvm()) == 0)
     return 0;
+
   for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
-      panic("copyuvm: pte should exist");
-    if(!(*pte & PTE_P))
-      panic("copyuvm: page not present");
-    pa = PTE_ADDR(*pte);
+    pte = walkpgdir(pgdir, (void*)i, 0);
+    if(pte == 0 || *pte == 0)         // PTE 자체가 없다
+      continue;
+
+    /* ───── case 1: non-present PTE (lazy page) ───── */
+    if(!(*pte & PTE_P)){
+      dst_pte = walkpgdir(d, (void*)i, 1);   // page table 새로 만들 수 있도록 1
+      if(dst_pte == 0)
+        goto bad;
+      *dst_pte = *pte;                       // 물리 페이지 없이 그대로 복사
+      continue;
+    }
+
+    /* ───── case 2: present page, 실제 메모리 복사 ───── */
+    pa    = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
       goto bad;
@@ -349,6 +362,7 @@ bad:
   freevm(d);
   return 0;
 }
+
 
 //PAGEBREAK!
 // Map user virtual address to kernel address.

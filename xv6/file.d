@@ -1,2 +1,2 @@
-file.o: file.c /usr/include/stdc-predef.h types.h defs.h param.h fs.h \
- spinlock.h sleeplock.h file.h
+file.o: file.c /usr/include/stdc-predef.h types.h defs.h mmu.h \
+ memlayout.h param.h fs.h spinlock.h sleeplock.h file.h

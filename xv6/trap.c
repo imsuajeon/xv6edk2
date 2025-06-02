@@ -72,6 +72,35 @@ trap(struct trapframe *tf)
     uartintr();
     lapiceoi();
     break;
+  case T_PGFLT: {
+  uint va = PGROUNDDOWN(rcr2());
+  struct proc *p = myproc();
+
+  if(va >= USERTOP || va < PGSIZE){           // 0x0 ~ 커널 영역
+    p->killed = 1;  break;
+  }
+
+  pte_t *pte = walkpgdir(p->pgdir, (void*)va, 0);
+  if(pte && (*pte & PTE_P)){                  // 이미 매핑: 권한 오류/가드
+    p->killed = 1;  break;
+  }
+
+  if(va + PGSIZE < p->tf->esp - 32){          // 스택 허용 범위 바깥
+    p->killed = 1;  break;
+  }
+
+  char *mem = kalloc();
+  if(!mem){ p->killed = 1; break; }
+  memset(mem, 0, PGSIZE);
+
+  if(mappages(p->pgdir, (void*)va, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+    kfree(mem); p->killed = 1; break;
+  }
+  lcr3(V2P(p->pgdir));                        // TLB flush
+  break;
+}
+
+
   case T_IRQ0 + 0xB:
     i8254_intr();
     lapiceoi();
